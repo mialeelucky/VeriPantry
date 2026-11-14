@@ -1,0 +1,75 @@
+# Transaction report: {{ s.transaction_id }}
+
+| Outcome | **{{ s.outcome }}**{% if s.reason_code %} ({{ s.reason_code }}){% endif %} |
+|---|---|
+| Customer | {{ s.customer }} · Agent: {{ s.agent }} · Mandate: {{ s.mandate }} |
+| Started / closed | {{ s.started }} → {{ s.closed or "open" }}{% if s.duration %} ({{ s.duration }}){% endif %} |
+| Order total | {{ s.total or "—" }} |
+| Summary | {{ s.summary or "—" }} |
+
+## 1. What was asked
+{% if request.original_text %}> "{{ request.original_text }}"
+
+{% endif %}Deliver by **{{ request.deliver_by }}** · purpose: {{ request.purpose }}
+
+| Line | Product / specification | Quantity | Constraints |
+|---|---|---|---|
+{% for l in request.lines %}| {{ l.line_id }} | {{ l.what }} | {{ l.quantity }} | {{ l.constraints }} |
+{% endfor %}
+
+## 2. What was checked
+{% for c in checked %}- **{{ c.line_id }}:** {{ c.reason }}. Candidates: {{ c.counts }}.
+{% endfor %}- Signed offers issued: {{ offers_issued }}.{% if attempts > 1 %} Fulfilment ran {{ attempts }} times (re-quote).{% endif %}
+
+## 3. Options considered
+{% for o in options %}### Line {{ o.line_id }}
+{% if o.plans %}Plans are ranked by fit to the request, cost, delivery reliability and sustainability (weights {{ o.weights }}); a complete, on-time plan always ranks above an incomplete one.
+
+| Rank | Plan | Total | Score | Deviations | Flags |
+|---|---|---|---|---|---|
+{% for p in o.plans %}| {{ p.label }} | {{ p.description }} | {{ p.total }} | {{ p.score }} | {{ p.deviations }} | {{ p.flags }} |
+{% endfor %}
+Why each plan holds its rank:
+{% for p in o.plans %}- **{{ p.label }}:** {{ p.rationale or "—" }}.
+{% endfor %}{% if o.not_presented %}
+Also evaluated, not presented:
+{% for n in o.not_presented %}- {{ n }}
+{% endfor %}{% endif %}{% else %}No acceptable plan was found.
+{% endif %}
+{% endfor %}
+## 4. Decision
+{% for d in decisions %}{% if d.selection %}**Line {{ d.line_id }}: {{ d.selection }}**
+
+{% endif %}{% for g in d.guardrails %}- {{ g.subject }}: **{{ g.outcome }}**{% if g.role %} (requires {{ g.role }}){% endif %}. {% if g.reasons %}
+{% for r in g.reasons %}  - {{ r }}
+{% endfor %}{% else %}No guardrail rule was triggered.
+{% endif %}{% endfor %}
+{% else %}No guardrail evaluation took place.
+{% endfor %}
+## 5. Human approval
+{% if approvals %}{% for a in approvals %}- {{ a }}
+{% endfor %}{% else %}Not required: within the agent's autonomous authority.
+{% endif %}
+## 6. Result
+{% if order %}| Product | Quantity | Unit price | Line total | Offer |
+|---|---|---|---|---|
+{% for l in order.lines %}| {{ l.productId }} | {{ l.qty }} | {{ l.unitPrice }} | {{ l.lineTotal }} | {{ l.offerId }} |
+{% endfor %}
+Order {{ order.orderId }} · total {{ order.total }} (VAT excluded) · approval: {{ order.approval }}
+{% else %}No order was placed. {{ next_step }}
+{% endif %}
+## 7. Timeline
+| Time | Actor | Event |
+|---|---|---|
+{% for t in timeline %}| {{ t.time }} | {{ t.actor }} | {{ t.text }} |
+{% endfor %}
+{% if view == "valio" %}
+## 8. Data disclosure (Valio view)
+{% for d in disclosure %}- {{ d }}
+{% endfor %}{% if not disclosure %}No disclosure events.
+{% endif %}
+{% endif %}
+## {{ "9" if view == "valio" else "8" }}. Integrity
+{{ integrity }}
+
+<sub>Report template {{ template_version }} · view: {{ view }} · rendered from audit events only.</sub>

@@ -133,6 +133,8 @@ overfill              = units_needed × content(SU) − required_quantity
 
 An overfill of up to `max(5 %, one sales unit)` is accepted silently. A larger overfill is allowed, but it is reported, and its cost counts against the plan.
 
+**Countable sales units.** The data lists `allowedLotSize = 0.01` even for cartons, bottles and other countable sales units. A fraction of a carton cannot be delivered, so for every sales unit other than `KG` and `L` the step is `max(allowedLotSize, 1)`: quantities are rounded up to whole units. That is still a multiple of the lot size.
+
 ---
 
 ## 5. Stage 2: retrieve candidates (static)
@@ -242,6 +244,8 @@ Alternatives are complete **plans**, not single products. A plan may combine pro
 | **Later delivery** | The exact product, delivered on its earliest available date after `deliverBy` (if `allowLaterDelivery`) |
 | **Partial** | Deliver only what is possible on time. This is offered only when nothing better exists, and it is always flagged. |
 
+When no complete on-time plan exists, a last-resort plan is built from everything usable on time, ordered by fit. If that plan happens to cover the full quantity, it is labelled **multi-substitute**, not partial: a plan is called partial only when it really covers less than requested.
+
 ### 9.2 Plan score
 
 Each plan receives four component scores, each normalised to [0, 1]:
@@ -278,35 +282,42 @@ The top three plans become **Best / Second best / Third best**. Three rules keep
 
 ## 10. Worked example: real data
 
-The buyer asks for 1,000 L of a specific product, **469363 Arla semi-skimmed milk drink 1 L UHT lactose-free**, by Monday 2026-11-16. The live data below was queried on 2026-11-14 at 21:00. Prices exclude VAT.
+The buyer asks for 1,000 L of a specific product, **469363 Arla semi-skimmed milk drink 1 L UHT lactose-free**, by Monday 2026-11-16, with the preferences *brand: Arla* and *fat: 1.5*. The live data below was queried on 2026-11-15 at 00:17. It is stored as the test fixture `backend/tests/fixtures/milk_2026-11-16.json`, and the automated tests reproduce every figure in this section. Prices exclude VAT.
 
 **Stages 4–5: the requested product is only partly available.** 469363 is a stocked product with 384 units (= 384 L) available on 2026-11-16 and a cut-off at 2026-11-15 17:00, which has not passed. Its status is `on_time_partial`, short by 616 L. Because the request names a specific product, the exact-match set contains only 469363 (§5), and **substitution is triggered**. Two other Arla lactose-free semi-skimmed products exist (469330, 5 × 1 L, and 464179, 10 L bag-in-box). Both are supplier-direct products whose cut-off (2026-11-12) has already passed, so they are `cutoff_passed` and can appear only in later-delivery plans.
 
-**Stage 7: substitute pool (S1, category 10400, `FREE_FROM_LACTOSE`).** All candidates have the same fat content (1.5 g/100 ml), the same Finnish-origin label and a 1 L pack. The brand differs from the request, and names and minor nutrition values differ slightly. `sim` is computed with the weights in §8.3:
+**Stage 7: substitute pool.** The pool holds the 30 most similar products from category 10400 (S1) and family 104 (S2) that pass the hard filters (`FREE_FROM_LACTOSE`). Of these, 14 can deliver on time. The candidates that matter for the result:
 
-| Product | Status | Price / L | Reliability | `sim` |
-|---|---|---|---|---|
-| 464306 Valio Arki Eila semi-skimmed milk drink 1 L, lactose-free | on time, ample stock | €1.01 | 1.00 | 0.82 |
-| 464201 Valio semi-skimmed milk 1 L UHT, lactose-free | on time, ample stock | €1.56 | 1.00 | 0.83 |
-| 464398 Valio Eila semi-skimmed milk drink 1 L UHT, lactose-free | on time, ample stock | €1.65 | 1.00 | 0.84 |
+| Product | Status | Price / L | Reliability | `sim` | Differs from the request in |
+|---|---|---|---|---|---|
+| 464306 Valio Arki Eila semi-skimmed milk drink 1 L, lactose-free | on time, ample stock | €1.01 | 1.00 | 0.83 | brand |
+| 464401 Valio Arki Eila **skimmed** milk drink 1 L, lactose-free | on time, ample stock | €1.10 | 1.00 | 0.66 | brand, fat (1.5 → 0.0) |
+| 464201 Valio semi-skimmed milk 1 L UHT, lactose-free | on time, ample stock | €1.56 | 1.00 | 0.83 | brand |
+| 464398 Valio Eila semi-skimmed milk drink 1 L UHT, lactose-free | on time, ample stock | €1.65 | 1.00 | 0.85 | brand |
+
+`sim` is computed with the weights in §8.3. 464401 scores low because it fails the preferred fat content, which lowers both the attribute and the nutrition component.
 
 **Stage 8: plans.** All products have the same carbon footprint (1.1 kg CO₂-eq/kg), so every plan gets the same sustainability score (0.96).
 
 | Rank | Plan | Cost | Fit | Cost score | Reliability | Score |
 |---|---|---|---|---|---|---|
-| **Best** | Full substitute: 1,000 L of 464306 (Valio Arki Eila) | €1,010.00 | 0.82 | 1.00 | 1.00 | **0.92** |
-| **Second** | Full substitute: 1,000 L of 464201 (Valio, UHT) | €1,560.00 | 0.83 | 0.65 | 1.00 | **0.81** |
+| **Best** | Full substitute: 1,000 L of 464306 (Valio Arki Eila, semi-skimmed) | €1,010.00 | 0.83 | 1.00 | 1.00 | **0.92** |
+| **Second** | Full substitute: 1,000 L of 464401 (Valio Arki Eila, skimmed) | €1,100.00 | 0.66 | 0.92 | 1.00 | **0.82** |
 | **Third** | Split: 384 L of 469363 (Arla, as requested) + 616 L of 464306 | €1,574.48 | 0.89 | 0.64 | 0.96 | **0.80** |
-| *(not shown)* | Full substitute: 1,000 L of 464398 (Valio Eila, UHT) | €1,650.00 | 0.84 | 0.61 | 1.00 | 0.81 |
+| *(not shown)* | Full substitute: 1,000 L of 464201 (Valio, UHT) | €1,560.00 | 0.83 | 0.65 | 1.00 | 0.82 |
+| *(not shown)* | Full substitute: 1,000 L of 464398 (Valio Eila, UHT) | €1,650.00 | 0.85 | 0.61 | 1.00 | 0.81 |
 
 Scores use the default weights and include the split penalty. They are rounded to two decimals.
 
-Plan 464398 scores marginally higher than the split plan (0.809 against 0.805). It is not shown because of the **strategy-diversity rule** (§9.3): two full-substitute plans are already listed, and the split plan is the only option that keeps the requested brand.
+Two points are worth noting:
+
+- **Price can outweigh a weaker fit.** 464401 has a much lower fit than 464201 (0.66 against 0.83), but it is €460 cheaper. Under the default weights its total is 0.817 against 0.816, so it ranks Second by less than 0.001. This is the ranking working as specified. Ranking says what is *best value*; whether the agent may *accept* it is a separate decision. Under the default guardrail policy, 464401 needs a person's sign-off: its similarity is below 0.80 (GR-X3) and fat is not a flexible attribute (GR-X4). A buyer who cares mostly about fit can raise the `fit` weight in `preferences.weights`.
+- **Strategy diversity.** 464201 (0.816) scores above the split plan (0.805). It is not shown because two full-substitute plans are already listed, and the split plan is the only option that keeps the requested brand (§9.3).
 
 What the customer is told:
 
-- **Best:** a different brand (Valio instead of Arla) with the same lactose-free, 1.5 % fat, 1 L specification. One product, delivered in full on Monday, and the cheapest option by €550 or more.
-- **Second:** a Valio UHT (long-life) product with the same specification and the closest name match. Choose this if long shelf life matters.
+- **Best:** a different brand (Valio instead of Arla) with the same lactose-free, 1.5 % fat, 1 L specification. One product, delivered in full on Monday, and the cheapest option by €90.
+- **Second:** skimmed instead of semi-skimmed milk, from Valio. €90 more than Best. Choosing it needs approval, because the fat content differs from what was asked.
 - **Third:** the only option that keeps the requested brand, for 38 % of the quantity. It costs more and arrives as two product lines. The Arla part has no delivery-reliability data.
 
 If the buyer had made *brand: Arla* a **hard** constraint, the Valio products would never enter the pool. The result would then be a **partial** plan (384 L on time) plus a **later-delivery** plan for the remainder, both flagged for the buyer's decision.
@@ -328,7 +339,7 @@ If the buyer had made *brand: Arla* a **hard** constraint, the Valio products wo
                   "quantity": { "value": 1000, "unit": "L" }, "availableDate": "2026-11-16",
                   "unitPrice": 1.01, "lineTotal": 1010.00 }],
       "total": { "value": 1010.00, "currency": "EUR", "vatExcluded": true },
-      "scores": { "fit": 0.82, "cost": 1.00, "reliability": 1.00, "sustainability": 0.96, "total": 0.92 },
+      "scores": { "fit": 0.83, "cost": 1.00, "reliability": 1.00, "sustainability": 0.96, "total": 0.92 },
       "deviations": [ { "attribute": "brand", "requested": "Arla", "proposed": "Valio" } ],
       "flags": ["substitution"],
       "explanation": "Same lactose-free 1.5 % 1 L milk from Valio; full quantity on Monday; lowest cost."

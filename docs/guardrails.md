@@ -221,7 +221,7 @@ If none of these exists, GR-M3 is not evaluated, and the decision records that i
 | ID | Scope | Trigger | Outcome | Reason code |
 |---|---|---|---|---|
 | GR-D1 | item | `availableDate` > `deliverBy` (flag `later_delivery`) | `ESCALATE(approver)` | `later_delivery` |
-| GR-D2 | item | The item has the flag `quantity_unconfirmed`, and its reliability is missing or < `minReliabilityForUnconfirmed` | `ESCALATE(approver)` | `unconfirmed_low_reliability` |
+| GR-D2 | item | The item has the flag `quantity_unconfirmed`, and its reliability is missing or < `minReliabilityForUnconfirmed`. The message shows the reliability band, not the raw score (§9). | `ESCALATE(approver)` | `unconfirmed_low_reliability` |
 
 ### 5.7 Substitution: "outside stated preferences"
 
@@ -368,11 +368,14 @@ The challenge's mock environment offers price and availability APIs but no order
   "planRef": { "requestId": "req_001", "lineId": "L1", "rank": 1 },
   "outcome": "ESCALATE",
   "requiredRole": "approver",
+  "scopes": ["order", "line", "item"],
+  "approverRole": null,
   "triggered": [{
     "rule": "GR-M1", "scope": "order", "outcome": "ESCALATE", "role": "approver",
     "code": "spend_over_auto_limit",
     "observed": 3030.00, "limit": 2000.00, "unit": "EUR",
-    "message": "Order total €3,030.00 exceeds the autonomous limit of €2,000.00."
+    "message": "Order total €3,030.00 exceeds the autonomous limit of €2,000.00.",
+    "satisfiedByApproval": false
   }],
   "skipped": [],
   "informational": ["reliability_no_data"],
@@ -383,7 +386,14 @@ The challenge's mock environment offers price and availability APIs but no order
 }
 ```
 
-`inputsDigest` is a hash of the canonical JSON (RFC 8785) of the plan, request, policy and the relevant part of the context. Together with `policy.version`, it lets anyone reproduce and verify the decision later.
+`inputsDigest` is a hash of the canonical JSON (RFC 8785) of the plan, request, policy and the relevant part of the context. Together with `policy.version`, it lets anyone reproduce and verify the decision later. `decisionId` is derived from the digest, so the same inputs always give the same ID.
+
+| Field | Meaning |
+|---|---|
+| `scopes` | Which rule scopes were evaluated. Per-plan evaluations during selection use `["line", "item"]`; the assembled order uses `["order"]`; the re-evaluation after a human approval uses all three. |
+| `approverRole` | Set only on a re-evaluation after approval (§8.3). Escalations the approver's role covers are marked `satisfiedByApproval: true` and no longer block the order; they stay in `triggered`, so the record shows what the approver accepted. |
+
+Messages never disclose internal (tier T2) data. GR-D2, for example, reports the delivery-reliability **band** (`high`, `medium`, `low` or `no_data`), not the raw score.
 
 ---
 
@@ -411,11 +421,11 @@ Data: the milk example from the fulfilment document, live prices from 2026-11-14
 | # | Request | Selected / presented plan | Rules triggered | Outcome |
 |---|---|---|---|---|
 | 1 | 1,000 L lactose-free semi-skimmed milk (spec only) | Fulfilled: 1,000 L of 464306, €1,010.00 | — | **`ALLOW`**: ordered autonomously |
-| 2 | 1,000 L of Arla 469363 specifically (384 L available) | Best: full substitute 464306, €1,010.00. Deviation: brand. `sim` 0.82, tier S1, €1.01/L. | — (brand is flexible; unit cost below €2.48 × 1.10) | **`ALLOW`**: ordered autonomously |
-| 3 | As #2, but the policy has `flexibleAttributes: []` | All three plans deviate on brand | GR-X4 on every plan | **`ESCALATE(approver)`**: approval request with all three plans; Best recommended |
+| 2 | 1,000 L of Arla 469363 specifically (384 L available) | Best: full substitute 464306, €1,010.00. Deviation: brand. `sim` 0.83, tier S1, €1.01/L. | — (brand is flexible; unit cost below €2.48 × 1.10) | **`ALLOW`**: ordered autonomously. Second (skimmed 464401) would have needed approval: GR-X3, GR-X4 on fat. |
+| 3 | As #2, but the policy has `flexibleAttributes: []` | All three plans deviate on brand | GR-X4 on every plan (plus GR-X3 on Second) | **`ESCALATE(approver)`**: approval request with all three plans; Best recommended |
 | 4 | 3,000 L (spec only) | Fulfilled: 3,000 L of 464306, €3,030.00 | GR-M1 (€3,030 > €2,000); GR-Q1 (3,000 L > 1,500 L) | **`ESCALATE(approver)`** |
 | 5 | 6,000 L (spec only) | Fulfilled: 6,000 L of 464306, €6,060.00 | GR-M1, GR-M2 (€6,060 > €5,000), GR-Q1 | **`ESCALATE(admin)`** |
-| 6 | 1,000 L lactose-free milk for a guest with a **milk allergy** (`excludedAllergens: ["AM"]`) | Any milk plan. 464306 declares `AM: CONTAINS`. | GR-S1 | **`DENY`**: lactose-free is not milk-free. No approver can override this. |
+| 6 | 1,000 L lactose-free milk for a guest with a **milk allergy** (`excludedAllergens: ["AM"]`) | Any milk plan. 464306 declares `AM: CONTAINS`. | GR-S1 | **`DENY`**: lactose-free is not milk-free. No approver can override this. (In the full pipeline the fulfilment layer already filters milk out and offers only plant-based drinks declaring `AM: FREE_FROM`. These are tier S2, so they go to approval. GR-S1 is the second line of defence: G7.) |
 | 7 | As #4, but no one responds before the approval deadline (2026-11-15 16:30, i.e. 30 minutes before the 17:00 cut-off) | Pending request | G4 | **`EXPIRED`**: never approved by silence. The agent re-quotes and creates a new approval request. |
 
 Scenario 6 shows why safety rules are `DENY` and not `ESCALATE`. A tired approver clicking "approve" must not be able to send milk to a milk-allergic guest.
@@ -473,7 +483,7 @@ Limits are **inclusive**: a value equal to a limit is within it (T13). Every com
 
 | Topic | Guidance |
 |---|---|
-| Module layout | `backend/app/guardrails/`: `models.py` (Decision, RuleResult, Policy), `rules.py` (one pure function per rule ID), `engine.py` (`evaluate`, aggregation), `selection.py` (§7), `approvals.py` (state machine, §8) |
+| Module layout | `backend/app/guardrails/`: `models.py` (Decision, RuleResult, Policy), `rules.py` (one pure function per rule ID), `engine.py` (`evaluate`, aggregation), `selection.py` (§7, plus order decision and re-evaluation after approval). The approval state machine (§8) lives in `backend/app/gateway/service.py`, because it needs storage, offers and the audit log; the guardrail package itself stays free of I/O. |
 | Rule registry | Rules are registered by ID in a single ordered list. Adding a rule means adding one function and its test cases. No other code changes. |
 | Policy loading | Policies are versioned JSON validated against a JSON Schema. Unknown fields are rejected, so a typo cannot silently disable a rule. |
 | Money | Use `Decimal`, never binary floats, for all monetary comparisons. |

@@ -177,6 +177,8 @@ A checkpoint is itself an event (`chain.checkpoint`), so checkpoints are chained
 
 A redacted stub keeps `seq`, `time`, `type`, `transactionId`, `payloadDigest`, `prevHash` and `hash`, and drops `payload`. A buyer can therefore verify the **entire** chain of their transaction without seeing Valio Aimo's internal data, such as upstream stock levels or which fields were withheld. This is the data-minimisation principle of the trust protocol (§5), applied to the audit trail.
 
+The chain is global, so other customers' events are interleaved with the buyer's own. In the buyer view they appear as **opaque links**: only `seq`, `prevHash` and `hash`, with no type, time, customer or transaction. The buyer can check that the links are continuous and that every one of their own events hashes correctly, up to the signed checkpoint, without learning anything about other customers.
+
 ---
 
 ## 6. Transaction lifecycle
@@ -207,7 +209,7 @@ Every transaction MUST end with exactly one `transaction.closed` event. The outc
 
 ### 7.1 Format and sections
 
-Each report is rendered as **Markdown**, from which **HTML** is produced, with identical content. Sections always appear in this order. A section with nothing to say states that explicitly ("No approval was required"), instead of being omitted.
+Each report is rendered as **Markdown**, from which **HTML** is produced, with identical content. Sections always appear in this order. A section with nothing to say states that explicitly ("No approval was required"), instead of being omitted. In the rendered report the Summary is the header table, and the remaining sections are numbered from 1.
 
 | # | Section | Content | View |
 |---|---|---|---|
@@ -224,59 +226,61 @@ Each report is rendered as **Markdown**, from which **HTML** is produced, with i
 
 ### 7.2 Example: buyer view, abridged
 
-The example uses scenario 2 of the guardrails specification. Plans, prices and scores are the real values from the fulfilment document. IDs, times and candidate counts are illustrative.
+The example below was rendered by the implementation from a live run against the Valio Aimo mock API (scenario 2 of the guardrails specification: 1,000 L of Arla 469363 by Monday). Long product names are shortened, and the timeline and the list of plans not presented are abridged; everything else is unchanged.
 
 ```markdown
-# Transaction report: req_001
+# Transaction report: smoke-arla-004726
 
-| Outcome | **ORDERED** (auto-approved) |
+| Outcome | **ORDERED** (auto_approved) |
 |---|---|
-| Customer | HOTEL-123 · Agent: hotel-123-procurement-01 · Mandate: mdt_7f3c9a |
-| Started / closed | 2026-11-14 21:10:01 → 21:10:04 (3.2 s) |
+| Customer | customer:HOTEL-123 · Agent: agent:hotel-123-procurement-01 · Mandate: mdt_dab829d1 |
+| Started / closed | 2026-11-15 00:47:27 → 2026-11-15 00:47:27 (0.2 s) |
 | Order total | €1,010.00 (VAT excluded) |
+| Summary | Ordered autonomously within the agent's authority. |
 
 ## 1. What was asked
-> "We need 1,000 litres of the Arla lactose-free semi-skimmed milk by Monday."
+Deliver by **2026-11-16** · purpose: quote_for_order
 
-| Line | Product | Quantity | Deliver by |
+| Line | Product / specification | Quantity | Constraints |
 |---|---|---|---|
-| L1 | 469363 Arla semi-skimmed milk drink 1 L UHT, lactose-free | 1,000 L | 2026-11-16 |
+| L1 | product 469363 | 1000 L | required: FREE_FROM_LACTOSE; preferred: brand:Arla, fat:1.5 |
 
 ## 2. What was checked
-Requested product 469363: 384 L available on time (short by 616 L), so substitution was required.
-Substitute candidates: 35 retrieved → 30 shortlisted → 22 feasible on time.
+- **L1:** The requested product can deliver only 384 of 1000 L on time, so substitution was required.
+  Candidates: 1 retrieved → 1 after hard filters → 1 shortlisted; 30 substitutes considered; 14 feasible on time.
+- Signed offers issued: 4.
 
 ## 3. Options considered
-Substitution was needed: the requested product can deliver only 384 of 1,000 L by 2026-11-16.
 Plans are ranked by fit to the request, cost, delivery reliability and sustainability
-(weights 0.45 / 0.30 / 0.15 / 0.10); a complete, on-time plan always ranks above an incomplete one.
+(weights 0.45 / 0.3 / 0.15 / 0.1); a complete, on-time plan always ranks above an incomplete one.
 
 | Rank | Plan | Total | Score | Deviations | Flags |
 |---|---|---|---|---|---|
-| Best | 1,000 L of 464306 Valio Arki Eila | €1,010.00 | 0.92 | brand: Arla → Valio | substitution |
-| Second | 1,000 L of 464201 Valio UHT | €1,560.00 | 0.81 | brand: Arla → Valio | substitution |
-| Third | 384 L of 469363 + 616 L of 464306 | €1,574.48 | 0.80 | brand (616 L) | substitution, split |
+| Best | 1000 L of 464306 Valio Arki Eila semi skimmed … | €1,010.00 | 0.92 | brand: Arla → Valio | substitution |
+| Second | 1000 L of 464401 Valio Arki Eila skimmed … | €1,100.00 | 0.82 | brand: Arla → Valio; fat: 1.5 → 0.0 | substitution |
+| Third | 384 L of 469363 Arla … + 616 L of 464306 Valio … | €1,574.48 | 0.80 | brand: Arla → Valio (61 %) | reliability_no_data, split, substitution |
 
 Why each plan holds its rank:
-- **Best:** cheapest complete plan (€550.00 below the next); full quantity on time, from one product;
-  only the brand differs.
-- **Second:** complete and on time, with the closest name match among the substitutes,
-  but €550.00 more expensive than Best.
-- **Third:** the only plan that keeps the requested product, for 384 L (38 %);
-  most expensive, and split into two products.
+- **Best:** cheapest complete plan (€90.00 below the next); from one product; only the brand differs.
+- **Second:** €90.00 more expensive than Best; from one product; only the brand, fat differ.
+- **Third:** €564.48 more expensive than Best; keeps the requested product for 384 L (38 %);
+  shown as a different kind of option; split into 2 products.
 
-Also evaluated, not presented: 1,000 L of 464398 Valio Eila UHT (score 0.81). Not shown because two
-full-substitute plans are already listed (strategy-diversity rule).
+Also evaluated, not presented:
+- full_substitute of 464201 (€1,560.00, score 0.82): not shown because two plans of the same
+  strategy are already listed (strategy-diversity rule)
+- full_substitute of 464398 (€1,650.00, score 0.81): ranked below third
+- …
 
 ## 4. Decision
-Selected: **Best** plan, autonomously (selection step 2: the top-ranked plan is within the agent's authority).
-Why: it is the highest-ranked plan, and every guardrail rule passed, so no human sign-off was needed.
+**Line L1: Selected: Best plan. Why: the highest-ranked plan, and every guardrail rule passed.**
 
-Best plan: **ALLOW**. No guardrail rule was triggered.
-- Brand change is permitted by policy (flexible attribute: brand).
-- Similarity 0.82 ≥ 0.80; substitution tier S1 is auto-approved.
-- Unit cost €1.01/L ≤ reference €2.48/L + 10 %.
-- Order total €1,010.00 ≤ autonomous limit €2,000.00.
+- Best plan: **ALLOW**. No guardrail rule was triggered.
+- Second plan: **ESCALATE** (requires approver).
+  - GR-X3 low_similarity: 464401 has similarity 0.66, below the minimum 0.80.
+  - GR-X4 inflexible_deviation: fat changes from 1.5 to 0.0; fat is not a flexible attribute in your policy.
+- Third plan: **ALLOW**. No guardrail rule was triggered.
+- Order-level rules (mandate, spend, velocity): **ALLOW**. No guardrail rule was triggered.
 
 ## 5. Human approval
 Not required: within the agent's autonomous authority.
@@ -284,22 +288,31 @@ Not required: within the agent's autonomous authority.
 ## 6. Result
 | Product | Quantity | Unit price | Line total | Offer |
 |---|---|---|---|---|
-| 464306 | 1,000 ST | €1.01 | €1,010.00 | off_2b81d4 |
+| 464306 | 1000 ST | €1.01 | €1,010.00 | off_8e59f41f5a8a |
+
+Order ord_3e9afa158017 · total €1,010.00 (VAT excluded) · approval: auto
 
 ## 7. Timeline
 | Time | Actor | Event |
 |---|---|---|
-| 21:10:01.102 | agent | Request received (purpose: quote_for_order) |
-| 21:10:01.240 | gateway | Catalog searched: 1 result |
-| 21:10:01.611 | — | Internal step |
-| …            | …       | … |
-| 21:10:04.318 | system | Transaction closed: ORDERED |
+| 00:47:27.413 | agent | Request received (purpose: quote_for_order) |
+| 00:47:27.414 | gateway | Internal step |
+| 00:47:27.564 | gateway | Signed offer off_8e59f41f5a8a for 464306, valid until 2026-11-15T17:00:00+02:00 |
+| 00:47:27.572 | system | Plans produced: L1 substitution_proposed (3 plans) |
+| 00:47:27.580 | system | Guardrails on line L1 plan 1: ALLOW |
+| 00:47:27.581 | system | Guardrails on line L1 plan 2: ESCALATE (2 rules) |
+| 00:47:27.584 | system | Guardrails on order-level rules: ALLOW |
+| 00:47:27.586 | system | Plan 1 selected for line L1 (top_plan_allowed) |
+| 00:47:27.588 | gateway | Order ord_3e9afa158017 submitted, total €1,010.00 |
+| 00:47:27.589 | system | Transaction closed: ORDERED (auto_approved) |
 
 ## 8. Integrity
-Events seq 1040–1061 verified. Chain head sealed by checkpoint seq 1062 (key kid `audit-2026-11`).
+Events seq 78–95 verified (18 links). Chain head sealed by checkpoint seq 96 (key kid `audit-2026-11`).
 ```
 
-A failed transaction uses the same structure. For example, scenario 6 of the guardrails specification renders with outcome **DENIED** and the decision line *"GR-S1 allergen_violation: 464306 declares milk (AM) as CONTAINS; milk is excluded for this request. No approver can override this rule."* Its Result section suggests what the buyer can do next, such as looking for a milk-free alternative.
+"Internal step" lines are the Valio-only events (upstream calls, data disclosure), shown as redacted stubs (§5). The report gives the guardrail outcome of **every** presented plan, not only the selected one: if the buyer later asks why the agent did not pick the cheaper skimmed milk, the answer is already in the record.
+
+A failed transaction uses the same structure. Its Result section states that no order was placed and what the buyer can do next, for example *"No approval arrived before the deadline. Submit the request again to receive fresh offers."* for an expired one.
 
 ### 7.3 Rendering rules
 
@@ -316,28 +329,29 @@ To keep reports deterministic (L5), a rationale is not free text. It is a list o
 
 ```json
 "rationale": [
-  { "code": "cheapest_complete", "params": { "marginEUR": "550.00" } },
+  { "code": "cheapest_complete", "params": { "marginEUR": "90.00" } },
   { "code": "single_product" },
   { "code": "only_deviation", "params": { "attributes": ["brand"] } }
 ]
 ```
 
-**Plan rationale codes** (on each plan in `fulfilment.completed`):
+**Plan rationale codes** (on each plan in `fulfilment.completed`), listed in **priority order**: the codes that best distinguish a plan from the others come first.
 
 | Code | Set when | Rendered as |
 |---|---|---|
-| `cheapest_complete` | Lowest total among complete, on-time plans | "cheapest complete plan (€{margin} below the next)" |
-| `cost_above_best` | Not the cheapest | "€{delta} more expensive than Best" |
-| `most_expensive` | Highest total among presented plans | "most expensive" |
-| `complete_on_time` | Coverage 100 %, delivered by `deliverBy` | "full quantity on time" |
-| `single_product` / `split` | One product / several products in the line | "from one product" / "split into {n} products" |
+| `cheapest_complete` / `cost_above_best` | Lowest total among complete, on-time plans / any other plan costing more than Best | "cheapest complete plan (€{margin} below the next)" / "€{delta} more expensive than Best" |
 | `keeps_requested_product` | Contains the requested product | "keeps the requested product for {qty} ({share})" |
-| `only_deviation` | All deviations are in the listed attributes | "only the {attributes} differ(s)" |
-| `highest_fit` / `closest_name` | Highest Fit score / highest name similarity among substitutes | "closest match to the request" / "closest name match" |
-| `highest_reliability` | Highest reliability score among presented plans | "most reliable delivery" |
-| `lowest_carbon` | Highest sustainability score, strictly above the others | "lowest carbon footprint" |
-| `later_delivery` / `partial` | Strategy is later delivery / partial | "delivered {date}, after the requested date" / "covers {qty} of {requested}" |
 | `diversity_rule_applied` | The plan was promoted into the top three by the strategy-diversity rule | "shown as a different kind of option" |
+| `later_delivery` / `partial` | Strategy is later delivery / partial | "delivered {date}, after the requested date" / "covers {qty} of {requested}" |
+| `complete_on_time` | Coverage 100 %, delivered by `deliverBy`, **and** it distinguishes the plan: the plan is the only one presented, or another presented plan is not complete and on time | "full quantity on time" |
+| `single_product` / `split` | One product / several products in the line | "from one product" / "split into {n} products" |
+| `only_deviation` | The plan deviates from the request in the listed attributes | "only the {attributes} differ(s)" |
+| `highest_fit` / `closest_name` | Strictly highest Fit among substitution plans / strictly highest name similarity among presented plans | "closest match to the request" / "closest name match" |
+| `highest_reliability` | Strictly highest reliability score among presented plans | "most reliable delivery" |
+| `lowest_carbon` | Strictly highest sustainability score among presented plans | "lowest carbon footprint" |
+| `most_expensive` | Highest total among several presented plans (never Best) | "most expensive" |
+
+Why priority order: with a cap of four codes, a strict table order would drop the most important reason of a plan. For example, the split plan of the worked example would lose "keeps the requested product". Saying "full quantity on time" about every plan, when all of them are, adds no information, so that code appears only where it distinguishes.
 
 **Selection rationale codes** (on `plan.selected`, or on the approval request):
 
@@ -349,7 +363,7 @@ To keep reports deterministic (L5), a rationale is not free text. It is a list o
 | `approver_choice` | A human approved a specific plan | "chosen by {approver} ({role})" |
 | `all_denied` | Selection step 5 | "every plan breaks a rule that no approver can override" |
 
-Each plan shows at most **four** codes, chosen in the order of the tables, so that the explanation stays short. New codes MAY be added. A code that a template does not know is rendered as its raw code, never silently dropped.
+Each plan shows at most **four** codes, the first applicable ones in priority order, so that the explanation stays short. New codes MAY be added. A code that a template does not know is rendered as its raw code, never silently dropped.
 
 ---
 
@@ -384,7 +398,7 @@ The report's Integrity section shows the result of steps 1–4. The same procedu
 |---|---|---|
 | AT01 | Auto-approved order (guardrails scenario 2) | Outcome `ORDERED`; report Approval section says "Not required" |
 | AT02 | Human-approved order | Outcome `ORDERED`; the report names the approver, role, time and chosen plan |
-| AT03 | Allergen denial (guardrails scenario 6) | Outcome `DENIED`; report shows GR-S1 with observed allergen state |
+| AT03 | Allergen safety (guardrails scenario 6) | A request excluding milk (`AM`) is offered only products declaring `AM: FREE_FROM`, and the report shows them. A plan that still contained milk would be `DENY` under GR-S1 with the observed allergen state (guardrails T06). |
 | AT04 | Approval rejected | Outcome `REJECTED`; the reason appears in the report |
 | AT05 | Approval expired, re-quote used up | Outcome `EXPIRED`; timeline shows `approval.expired` and `requote.started` |
 | AT06 | No candidates | Outcome `UNFULFILLABLE`; candidate counts show where the funnel became empty |

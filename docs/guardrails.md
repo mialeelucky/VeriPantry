@@ -344,6 +344,8 @@ Step 3 lets the agent avoid needless escalation when an almost-as-good plan is w
 
 The **deadline** is the earliest of every presented item's `offerValidUntil` and `closingTime`, minus `deadlineBufferMinutes`. An approval that arrives after the cut-off could not be delivered on time anyway.
 
+Because the deadline is real, the request is **pushed** to every person of the customer whose role is at least `requiredRole`, by web push or webhook, with a reminder one hour before the deadline and a notice once it is decided or expired (frontend §4.4). Each notification is an audit event (`notification.sent`), so the record shows that the people allowed to decide were actually told. A notification only invites a decision: the decision itself always happens in VeriPantry, where identity and role are checked.
+
 ### 8.3 Human decisions
 
 | Action | Effect |

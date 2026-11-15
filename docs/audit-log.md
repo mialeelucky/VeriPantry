@@ -93,6 +93,7 @@ Event types are stable identifiers. The names used in the guardrails specificati
 | Approve | `approval.decided` | human | both | An approver approved or rejected |
 | Approve | `approval.expired` | system | both | The approval deadline passed |
 | Approve | `approval.superseded` | human | both | The request was modified and replaced |
+| Approve | `notification.sent` | system | both | An approval request, reminder or decision notice was sent, or could not be (frontend §4.4) |
 | Retry | `requote.started` | system | both | An expired offer triggered a re-quote |
 | Order | `order.submitted` | gateway | both | The order was recorded |
 | Order | `order.failed` | gateway | both | Recording the order failed |
@@ -119,6 +120,7 @@ Payloads reuse the objects already defined in the other specifications wherever 
 | `approval.decided` | `{ approvalId, action, planRank?, reason?, approver: { id, displayName, role } }` |
 | `approval.expired` | `{ approvalId, deadline }` |
 | `approval.superseded` | `{ approvalId, newRequestId, changes }` |
+| `notification.sent` | `{ approvalId, kind, channel, recipients, outcome }`. `kind` is `request`, `reminder` or `decided`. `channel` is `web_push` or `webhook`. `recipients` are person IDs (never push endpoints or webhook URLs). `outcome` is `sent`, `failed` or `no_recipient`. |
 | `requote.started` | `{ attempt, maxAttempts, expiredOfferIds }` |
 | `order.submitted` | `{ orderId, lines: [{ productId, salesUnits, unitPrice, lineTotal, offerId }], total, approvalId \| "auto" }` |
 | `order.failed` | `{ reason }` |

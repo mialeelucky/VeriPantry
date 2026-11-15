@@ -102,7 +102,10 @@ export function ChainStrip({ steps }: { steps: { seq: number; ok: boolean }[] })
       {steps.map((s, i) => (
         <div key={s.seq} className="flex items-center gap-1.5">
           <span
-            className={cx("flex size-10 items-center justify-center rounded-[10px] text-[12px] tabular transition-colors", s.ok ? "bg-ok text-ok-fg" : "bg-stop text-stop-fg")}
+            className={cx(
+              "flex size-10 items-center justify-center rounded-[10px] text-[12px] tabular transition-colors",
+              s.ok ? "bg-ok text-ok-fg" : "bg-stop-fg font-medium text-surface", // broken links must be unmistakable
+            )}
             title={`Step ${i + 1} · #${s.seq}`}
           >
             {i + 1}

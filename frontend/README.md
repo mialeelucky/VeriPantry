@@ -13,6 +13,8 @@ React 18 + TypeScript + Vite + Tailwind. Built to [`docs/frontend.md`](../docs/f
 
 ## Run (three processes)
 
+The simplest way is `py run_demo.py` from the repo root (see `JUDGES.md`). By hand:
+
 ```powershell
 # 1. gateway in demo mode on recorded supplier data (from the repo root)
 backend\.venv\Scripts\python.exe -m uvicorn app.demo:app --app-dir backend --port 8000

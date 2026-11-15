@@ -1,0 +1,19 @@
+[
+  { "id": "intro", "caption": "", "speech": "VeriPantry. Purchasing agents a wholesaler can trust, and buyers stay in control of." },
+  { "id": "ask", "caption": "A chef asks the purchasing agent in plain words", "speech": "A chef asks the purchasing agent, in plain words." },
+  { "id": "confirm", "caption": "The agent shows what it understood: must-haves are locked, preferences can bend", "speech": "The agent shows what it understood. Must-haves are locked. Preferences can bend." },
+  { "id": "working", "caption": "It checks live stock and price with Valio Aimo and receives signed offers", "speech": "It checks stock and price with Valio Aimo, and receives signed offers." },
+  { "id": "plans", "caption": "Arla is short. Three ranked plans, each with its reason and guardrail status", "speech": "Arla is short. So the agent ranks three plans, each with its reason, and its guardrail status." },
+  { "id": "auto", "caption": "Best is within the agent's authority, so it orders by itself", "speech": "The best plan is within the agent's authority, so it orders by itself." },
+  { "id": "verified", "caption": "The offer's signature and the audit trail are verified in the browser", "speech": "The offer's signature, and the audit trail, are verified right in the browser." },
+  { "id": "event", "caption": "Now 3,000 litres for an event", "speech": "Now, three thousand litres for an event." },
+  { "id": "limit", "caption": "€3,030 is above the agent's €2,000 limit: it must not decide alone", "speech": "Three thousand and thirty euros is above the agent's two thousand euro limit. It must not decide alone." },
+  { "id": "pushed", "caption": "The request is pushed to the Head Chef's phone", "speech": "So the request is pushed to the head chef's phone." },
+  { "id": "why", "caption": "The manager sees exactly which rule was triggered, and what did not change", "speech": "The manager sees exactly which rule was triggered, and what did not change." },
+  { "id": "approved", "caption": "Approved. The agent places the order within seconds", "speech": "Approved. The agent places the order within seconds." },
+  { "id": "story", "caption": "Valio Aimo's auditor sees how the order was decided, in four sentences", "speech": "Valio Aimo's auditor sees how the order was decided, in four sentences." },
+  { "id": "timeline", "caption": "Every step is logged. The buyer's view hides Valio's internal data", "speech": "Every step is logged. The buyer's view hides Valio's internal data." },
+  { "id": "chain", "caption": "Each step is hash-chained and sealed with Valio Aimo's published key", "speech": "Each step is hash chained, and sealed with Valio Aimo's published key." },
+  { "id": "tamper", "caption": "Change one recorded step, and verification shows exactly where it breaks", "speech": "Change one recorded step, and verification shows exactly where it breaks." },
+  { "id": "outro", "caption": "", "speech": "VeriPantry. Open, signed, and auditable. Agents decide within their authority. People decide the rest." }
+]

@@ -68,6 +68,9 @@ class GatewayClient:
     def token(self, force: bool = False) -> str:
         with self._lock:
             if force or not self._token or time.time() > self._expires - 60:
+                # Re-read the gateway's clock for every new token: a gateway on recorded
+                # time restarts at the recording moment, so an old offset goes stale.
+                self._offset = None
                 r = self._http.post(f"{self.base_url}/oauth/token", data={
                     "grant_type": JWT_BEARER, "assertion": self.mandate, "client_assertion": self._assertion(),
                 })

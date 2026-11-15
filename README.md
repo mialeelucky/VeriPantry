@@ -8,4 +8,4 @@ Before the Agent Era arrives, establish the security and access protocols for AP
 | `agent/` | Stub buyer agent (no LLM yet) |
 | `frontend/` | Web app: buyer flow, approvals, audit, recording layout |
 
-To run the demo, see `frontend/README.md`.
+**Run the demo with one command:** `py run_demo.py` (Windows) or `python3 run_demo.py` (macOS/Linux). See [`JUDGES.md`](JUDGES.md) for what to try.

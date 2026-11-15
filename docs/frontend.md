@@ -34,13 +34,13 @@ The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** are used as defined
 | Icons | lucide-react | Outline icons, consistent stroke |
 | Data | TanStack Query | Caching, polling, retries, loading and error states |
 | Routing | React Router | Plain URLs per screen (§3) |
-| Motion | framer-motion, used sparingly | Step transitions and the progress replay only |
+| Motion | CSS transitions and one keyframe, no animation library | Step transitions and the progress replay only |
 | PWA | vite-plugin-pwa | Installable approval screen; no offline ordering |
 | Tests | Vitest + Testing Library; Playwright for demo scenarios | §11 |
 
 The default theme is **light**: it projects best and keeps the three status colours most distinct. Dark mode follows the operating system and is fully supported through the tokens.
 
-The UI language is **English**. All strings live in one module so Finnish and Swedish can be added without touching components.
+The UI language is **English**. In this version the strings live in the screen components; shared wording (status labels, problem messages, rationale texts) comes from `src/lib/` or from the gateway. Moving all strings into one module is the first step before adding Finnish and Swedish.
 
 ---
 
@@ -89,6 +89,9 @@ The frontend needs these four agent endpoints. The agent service itself is speci
 | `POST /agent/submit` `{ request, originalText }` | Send the confirmed request to the gateway | The gateway's transaction view (§4.5) |
 | `GET /agent/transactions/:id` | Current state of a transaction | Transaction view |
 | `GET /agent/scenarios` | One-tap demo scenarios (§9) | `[{ id, title, text, draft }]` |
+| `GET /agent/transactions/:id/verify` | Audit verification of the buyer's own transaction (step 5) | `VerifyResponse` |
+
+The agent aligns its signature timestamps with the gateway's clock (`GET /health` returns `now`), so it also works when the gateway runs on recorded time. Relative dates such as "by Monday" use the same clock.
 
 ### 4.2 Gateway endpoints used directly
 
@@ -103,6 +106,8 @@ The frontend needs these four agent endpoints. The agent service itself is speci
 | `GET /v1/audit/transactions/:id/report?format=pdf&view=…` | "Export PDF" |
 | `GET /v1/audit/verify?fromSeq&toSeq` | Integrity tab |
 | `GET /.well-known/jwks.json` | Offer signature check in the browser (§5.1, step 5) |
+| `GET /v1/audit/transactions/:id/verify` | Integrity tab: this transaction's part of the chain, in the caller's view |
+| `GET /health` | The gateway's clock (`now`): countdowns use it, because the gateway decides expiry |
 
 ### 4.3 Authentication in the demo
 
@@ -197,7 +202,7 @@ A step indicator at the top (`1 Ask · 2 Confirm · 3 Working · 4 Choose · 5 D
 | Gateway state | Step 4 behaviour |
 |---|---|
 | `ORDERED` (agent decided, selection step 2 or 3) | The selected plan is marked "Ordered by your agent". The primary button reads `See confirmation`. The other plans stay visible for transparency. |
-| `PENDING_APPROVAL` | The recommended plan is marked "Waiting for {role}". The primary button reads `Notify approver`, and step 5 shows "Sent for approval" with the deadline. The screen polls (§8) and moves to "Ordered" when the approval lands. |
+| `PENDING_APPROVAL` | The recommended plan is marked "Waiting for {role}". The subtitle says the approver has been notified (the gateway does this itself, §4.4), the primary button reads `See status`, and step 5 shows "Sent for approval" with the deadline. The screen polls (§8) and moves to "Ordered" when the approval lands. |
 | `DENIED` / `UNFULFILLABLE` | No plan cards. A red or neutral explanation from the closing reason, and `Change request` back to step 2. |
 
 **Why step 3 is a replay.** The gateway answers in well under a second, so step 3 replays the real stages afterwards (about 600 ms per row). Every number comes from the response or the transaction's audit events (`candidateCounts`, offers issued), never from a script. The replay MUST be skippable and MUST NOT be longer than 4 s in total.
@@ -376,7 +381,7 @@ The approval moment then plays out in one shot: the chef submits the 3,000 L req
 |---|---|
 | Unit | Problem mapping, status mapping (`guardrail.outcome` → badge), countdown, number formatting |
 | Component | `PlanCard` for each guardrail outcome; Confirm screen editing; Decide screen validation (reject without a reason) |
-| End-to-end (Playwright) | Each scenario of §9 against the gateway with `UPSTREAM=fixture` (B6): asserts the final status, the badges shown, and that the audit Integrity tab says "verified". One test runs the approval on a second browser context (the "phone") and checks that it received the notification before approving. |
+| End-to-end (Playwright) | Each scenario of §9 against the gateway with `UPSTREAM=fixture` (B6): asserts the final status, the badges shown, and that the audit Integrity tab says "verified". One test runs the approval on a second browser context (the "phone"). The tests drive the installed Microsoft Edge. Push delivery itself is not exercised in the browser (a test browser has no push service); recipients, payloads, reminders and the decided notice are covered by backend tests with a recording push sender. |
 | Backend | Notification dispatch: the right recipients for each `requiredRole`, nothing secret in the payload, reminder and decided notices, `no_recipient` when nobody can be reached |
 
 ---
@@ -392,8 +397,10 @@ frontend/
     screens/      buy/, approvals/, audit/, stage/, sign-in/
     i18n/         en.ts (all strings)
     styles/       tokens.css (§6.1), tailwind.css
-    lib/          format.ts, jws.ts (offer signature check), status.ts
-  index.html, vite.config.ts, tailwind.config.ts
+    lib/          format.ts, jws.ts (offer signature check), status.ts, problems.ts, push.ts, clock.ts
+    sw.ts         service worker: app shell and push notifications
+  e2e/            Playwright scenarios (§11)
+  index.html, vite.config.ts, playwright.config.ts
 ```
 
 ---

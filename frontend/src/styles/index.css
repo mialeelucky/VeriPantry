@@ -1,0 +1,117 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* Design tokens (frontend.md §6.1). Components only use these. */
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --surface-muted: #f1f1ee;
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.16);
+  --ink: #1a1a1a;
+  --ink-2: #5f5f5a;
+  --ink-3: #8a8a84;
+  --ok: #eaf3de;
+  --ok-fg: #3b6d11;
+  --attn: #faeeda;
+  --attn-fg: #854f0b;
+  --stop: #fcebeb;
+  --stop-fg: #a32d2d;
+  --primary: #1a1a1a;
+  --on-primary: #ffffff;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111111;
+    --surface: #1b1b1b;
+    --surface-muted: #242424;
+    --line: rgba(255, 255, 255, 0.1);
+    --line-strong: rgba(255, 255, 255, 0.2);
+    --ink: #f2f2f2;
+    --ink-2: #b4b4ae;
+    --ink-3: #7e7e78;
+    --ok: #1e2d10;
+    --ok-fg: #a7d46e;
+    --attn: #3a2a0e;
+    --attn-fg: #f2b866;
+    --stop: #3a1616;
+    --stop-fg: #f09595;
+    --primary: #f2f2f2;
+    --on-primary: #111111;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-muted: var(--surface-muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ok: var(--ok);
+  --color-ok-fg: var(--ok-fg);
+  --color-attn: var(--attn);
+  --color-attn-fg: var(--attn-fg);
+  --color-stop: var(--stop);
+  --color-stop-fg: var(--stop-fg);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius-sm: 8px;
+  --radius-card: 14px;
+  --radius-sheet: 20px;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 21px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@keyframes vp-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.vp-step {
+  animation: vp-in 150ms ease-out;
+}

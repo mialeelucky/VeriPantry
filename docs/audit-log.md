@@ -209,7 +209,7 @@ Every transaction MUST end with exactly one `transaction.closed` event. The outc
 
 ### 7.1 Format and sections
 
-Each report is rendered as **Markdown**, from which **HTML** is produced, with identical content. Sections always appear in this order. A section with nothing to say states that explicitly ("No approval was required"), instead of being omitted. In the rendered report the Summary is the header table, and the remaining sections are numbered from 1.
+Each report is rendered as **Markdown**, from which **HTML** and an A4 **PDF** are produced, with identical content. The PDF is a one-click download for auditors: same events, same bytes, so a PDF handed to a third party can later be checked against the chain. Free text in events (an agent's `originalText`, product names) is HTML-escaped before rendering, and the PDF converter may load nothing but its font files: no network, no other local paths. Sections always appear in this order. A section with nothing to say states that explicitly ("No approval was required"), instead of being omitted. In the rendered report the Summary is the header table, and the remaining sections are numbered from 1.
 
 | # | Section | Content | View |
 |---|---|---|---|
@@ -386,7 +386,7 @@ The report's Integrity section shows the result of steps 1–4. The same procedu
 | Method and path | Purpose | Access |
 |---|---|---|
 | `GET /audit/transactions/{id}` | Transaction status and its events (in the view the caller is entitled to) | Buyer: own transactions; Valio: all |
-| `GET /audit/transactions/{id}/report?view=buyer\|valio&format=md\|html` | The rendered report | `view=valio` for Valio staff only |
+| `GET /audit/transactions/{id}/report?view=buyer\|valio&format=md\|html\|pdf` | The rendered report; `pdf` is returned as a download | `view=valio` for Valio staff only |
 | `GET /audit/transactions?customer&from&to&outcome` | List transactions, e.g. all `DENIED` in a week | Buyer: own transactions; Valio: all |
 | `GET /audit/verify?fromSeq&toSeq` | Run the verification of §8 | Anyone authenticated |
 

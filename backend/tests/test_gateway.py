@@ -282,6 +282,54 @@ def test_whole_chain_verifies_after_a_session(world):
     assert v["ok"] is True
 
 
+# --------------------------------------------------------------------------- PDF export (audit-log §7.1)
+
+
+def _pdf_text(data: bytes) -> str:
+    import io
+
+    from pypdf import PdfReader
+
+    return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(data)).pages)
+
+
+def test_pdf_report_one_click(world):
+    world.buy(ARLA, text="We need 1,000 litres of Arla lactose-free milk by Monday.")
+    r = world.client.get("/v1/audit/transactions/req_001/report", params={"format": "pdf"}, headers=world.h(world.approver_token))
+    assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
+    assert r.headers["content-disposition"] == 'attachment; filename="audit-report-req_001-buyer.pdf"'
+    assert r.content.startswith(b"%PDF")
+    text = _pdf_text(r.content)
+    for expected in ("Transaction report: req_001", "ORDERED", "€1,010.00", "keeps the requested product", "verified"):
+        assert expected in text, expected
+
+
+def test_pdf_is_deterministic_and_access_controlled(world):
+    world.buy(SPEC)
+    get = lambda **p: world.client.get("/v1/audit/transactions/req_001/report", params={"format": "pdf", **p}, headers=world.h(world.approver_token))  # noqa: E731
+    assert get().content == get().content  # same events, same bytes (AT12 for PDF)
+    assert get(view="valio").status_code == 403
+    assert world.client.get("/v1/audit/transactions/req_001/report", params={"format": "docx"}, headers=world.h(world.approver_token)).status_code == 400
+
+
+def test_agent_text_cannot_inject_markup_into_reports(world):
+    payload = "<img src='file:///C:/Windows/win.ini'><script>alert(1)</script>"
+    world.buy(SPEC, text=payload)
+    html_report = world.client.get("/v1/audit/transactions/req_001/report", params={"format": "html"}, headers=world.h(world.approver_token)).text
+    assert "<script>" not in html_report and "<img" not in html_report
+    assert "&lt;script&gt;" in html_report
+    pdf = world.client.get("/v1/audit/transactions/req_001/report", params={"format": "pdf"}, headers=world.h(world.approver_token))
+    assert pdf.status_code == 200 and "<script>alert(1)</script>" in _pdf_text(pdf.content)  # shown as text, not executed
+
+
+def test_pdf_converter_refuses_external_resources():
+    from app.audit.pdf import html_to_pdf
+
+    # Even raw markup that bypassed escaping cannot make the converter read local files.
+    pdf = html_to_pdf("<p>x</p><img src='file:///C:/Windows/win.ini'/>", footer="t")
+    assert pdf.startswith(b"%PDF") and b"[fonts]" not in pdf
+
+
 def test_buyers_cannot_read_other_customers_transactions(world, catalog, upstream, clock):
     world.buy(SPEC)
     other, _ = make_human("u_x", "Other", "approver", "admin", "customer:OTHER")

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import Depends, FastAPI, Form, Header, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
+from app.audit.pdf import render_report_pdf
 from app.audit.render import render_report
 from app.audit.verify import verify_range
 from app.audit.views import view_events
@@ -153,10 +155,18 @@ def create_app(service: GatewayService) -> FastAPI:
 
     @app.get("/v1/audit/transactions/{tx_id}/report")
     def report(tx_id: str, view: str = "buyer", format: str = "md", c=Depends(caller)):
+        if view not in ("buyer", "valio"):
+            raise ApiError(400, "invalid_view", "view must be buyer or valio")
+        if format not in ("md", "html", "pdf"):
+            raise ApiError(400, "invalid_format", "format must be md, html or pdf")
         allowed_view, customer = audit_scope(c, tx_id)
         if view == "valio" and allowed_view != "valio":
             raise ApiError(403, "valio_view_restricted", "The Valio view is for Valio Aimo staff")
-        body = render_report(service.audit.store, tx_id, view, customer, service.keys.jwks, fmt="html" if format == "html" else "md")
+        if format == "pdf":
+            pdf = render_report_pdf(service.audit.store, tx_id, view, customer, service.keys.jwks)
+            filename = "audit-report-" + re.sub(r"[^A-Za-z0-9_.-]", "_", tx_id) + f"-{view}.pdf"
+            return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        body = render_report(service.audit.store, tx_id, view, customer, service.keys.jwks, fmt=format)
         return HTMLResponse(body) if format == "html" else PlainTextResponse(body, media_type="text/markdown; charset=utf-8")
 
     @app.get("/v1/audit/verify")

@@ -30,9 +30,11 @@
 {% for p in o.plans %}| {{ p.label }} | {{ p.description }} | {{ p.total }} | {{ p.score }} | {{ p.deviations }} | {{ p.flags }} |
 {% endfor %}
 Why each plan holds its rank:
+
 {% for p in o.plans %}- **{{ p.label }}:** {{ p.rationale or "—" }}.
 {% endfor %}{% if o.not_presented %}
 Also evaluated, not presented:
+
 {% for n in o.not_presented %}- {{ n }}
 {% endfor %}{% endif %}{% else %}No acceptable plan was found.
 {% endif %}
@@ -41,7 +43,7 @@ Also evaluated, not presented:
 {% for d in decisions %}{% if d.selection %}**Line {{ d.line_id }}: {{ d.selection }}**
 
 {% endif %}{% for g in d.guardrails %}- {{ g.subject }}: **{{ g.outcome }}**{% if g.role %} (requires {{ g.role }}){% endif %}. {% if g.reasons %}
-{% for r in g.reasons %}  - {{ r }}
+{% for r in g.reasons %}    - {{ r }}
 {% endfor %}{% else %}No guardrail rule was triggered.
 {% endif %}{% endfor %}
 {% else %}No guardrail evaluation took place.

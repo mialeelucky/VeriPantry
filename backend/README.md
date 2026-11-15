@@ -64,5 +64,5 @@ worked examples of the fulfilment document.
 | `POST /v1/purchase-requests` | agent | Full transaction: plans, signed offers, guardrails, order or approval |
 | `GET /v1/purchase-requests/{id}` | agent / approver | Status, plans, offers, audit receipt |
 | `GET /v1/approvals`, `POST /v1/approvals/{id}/decision` | approver | Approve, reject or modify |
-| `GET /v1/audit/transactions/{id}/report?view=buyer\|valio&format=md\|html` | buyer / Valio staff | Human-readable audit report |
+| `GET /v1/audit/transactions/{id}/report?view=buyer\|valio&format=md\|html\|pdf` | buyer / Valio staff | Human-readable audit report; `format=pdf` downloads an A4 PDF |
 | `GET /v1/audit/verify?fromSeq&toSeq` | any | Chain verification |

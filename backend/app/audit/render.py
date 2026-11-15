@@ -5,6 +5,7 @@ Deterministic (L5): no clock, no LLM, no lookups outside the events.
 
 from __future__ import annotations
 
+import html
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -294,12 +295,36 @@ def build_context(store: AuditStore, transaction_id: str, view: View, customer: 
     }
 
 
+def _escape(value: Any) -> Any:
+    """Neutralise HTML in every string taken from events.
+
+    Event payloads include free text from agents (e.g. ``originalText``) and
+    supplier data (product names). Markdown passes raw HTML through, so without
+    this an agent could inject markup into the HTML and PDF reports.
+    """
+    if isinstance(value, str):
+        return html.escape(value, quote=False)
+    if isinstance(value, dict):
+        return {k: _escape(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_escape(v) for v in value]
+    return value
+
+
+def render_markdown(store: AuditStore, transaction_id: str, view: View, customer: str | None, jwks: list[dict]) -> str:
+    ctx = _escape(build_context(store, transaction_id, view, customer, jwks))
+    return _env.get_template("report.md.j2").render(**ctx)
+
+
+def markdown_to_html_body(md: str) -> str:
+    return markdown.markdown(md, extensions=["tables"])
+
+
 def render_report(store: AuditStore, transaction_id: str, view: View, customer: str | None, jwks: list[dict], fmt: str = "md") -> str:
-    ctx = build_context(store, transaction_id, view, customer, jwks)
-    md = _env.get_template("report.md.j2").render(**ctx)
+    md = render_markdown(store, transaction_id, view, customer, jwks)
     if fmt == "md":
         return md
-    body = markdown.markdown(md, extensions=["tables"])
+    body = markdown_to_html_body(md)
     return (
         "<!doctype html><html><head><meta charset='utf-8'><title>Transaction report</title>"
         "<style>body{font-family:system-ui,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;line-height:1.5}"

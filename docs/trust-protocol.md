@@ -62,7 +62,7 @@ A plain API key answers none of these. It identifies a *caller*, not a *principa
 
 **Why the gateway matters.** The upstream APIs are protected by a single Valio Aimo API key. They return raw values, such as exact stock amounts, and are meant to be queried only for narrowed-down product lists. Giving that key to external agents would expose everything to everyone. The gateway keeps the key server-side and decides, per request, what a given agent may learn.
 
-**About the demo's agent.** For the demo we ship a *reference buyer agent*. It uses an LLM to turn a buyer's sentence, for example "1,000 litres of lactose-free milk by Monday", into a structured request. It talks to the gateway **only through the same public interface any third-party agent would use**. It holds no privileged access, so it can be replaced by anyone else's agent.
+**About the demo's agent.** For the demo we ship a *reference buyer agent*. It turns a buyer's sentence, for example "1,000 litres of lactose-free milk by Monday", into a structured request. In the demo this is a rule-based stand-in (scenario presets plus a small parser, no LLM); an LLM-based agent will later replace only this understanding step. It talks to the gateway **only through the same public interface any third-party agent would use**. It holds no privileged access, so it can be replaced by anyone else's agent.
 
 ---
 
@@ -355,4 +355,4 @@ Every element can be implemented with off-the-shelf libraries in any mainstream 
 | Signed offers | Ed25519 JWS; keys in configuration | Keys in an HSM or cloud KMS, with scheduled rotation |
 | Audit log | Hash chain in a local database, with receipts | Append-only store with externally anchored checkpoints |
 | Discovery | Static `agent-interface.json` and OpenAPI | Versioned, with a deprecation policy |
-| Buyer agent | Reference LLM agent that uses only the public interface | Any third-party agent; optional MCP adapter over the same operations |
+| Buyer agent | Rule-based reference agent (to be replaced by an LLM agent) that uses only the public interface | Any third-party agent; optional MCP adapter over the same operations |

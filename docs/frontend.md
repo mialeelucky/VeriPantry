@@ -338,7 +338,7 @@ Push brings a new request to the approver within seconds. Polling keeps every sc
 
 The demo is a **recording**. Judges watch it; they do not operate the system. Everything in it must therefore be real and visible on screen, and repeatable take after take.
 
-**Scenarios.** `GET /agent/scenarios` provides one-tap presets. Each fills step 1 with a sentence and skips the LLM, so a take never fails on language parsing:
+**Scenarios.** `GET /agent/scenarios` provides one-tap presets. Each fills step 1 with a sentence and skips language parsing, so a take never fails on language parsing:
 
 | Scenario | What the recording shows |
 |---|---|

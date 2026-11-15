@@ -31,8 +31,12 @@ python -m scripts.dev_setup     # demo customer, keys, approvers, policy in var/
 ## Run
 
 ```powershell
-uvicorn app.main:app --port 8000
+uvicorn app.main:app --port 8000   # live supplier API
+uvicorn app.demo:app --port 8000   # demo: recorded data, demo sign-in (/dev/*), tamper preview
+python -m scripts.dev_setup --reset-demo   # clear transactions + audit log between takes
 ```
+
+The full demo (gateway + stub agent + frontend) is described in `../frontend/README.md`.
 
 Interactive API docs: http://127.0.0.1:8000/docs ·
 discovery: http://127.0.0.1:8000/.well-known/agent-interface.json

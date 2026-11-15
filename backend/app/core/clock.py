@@ -36,6 +36,23 @@ class FixedClock:
         self._now = at
 
 
+class OffsetClock:
+    """Starts at a given time and runs in real time from there.
+
+    Used with recorded upstream data (B6): the demo begins at the moment the
+    fixture was recorded, and deadlines and countdowns still move.
+    """
+
+    def __init__(self, start: datetime):
+        if start.tzinfo is None:
+            raise ValueError("OffsetClock needs a timezone-aware datetime")
+        self._start = start
+        self._boot = datetime.now(HELSINKI)
+
+    def now(self) -> datetime:
+        return self._start + (datetime.now(HELSINKI) - self._boot)
+
+
 def parse_api_time(value: str | None) -> datetime | None:
     """Parse upstream timestamps such as ``2026-11-15T17:00:00+0200``."""
     if not value:

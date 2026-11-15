@@ -25,6 +25,7 @@ class CustomerEntry(Model):
     id: str
     name: str
     org_jwks: list[dict[str, Any]]  # buyer organisation's mandate-signing keys
+    webhook_url: str | None = None  # where approval notifications are posted (frontend.md §4.4)
 
 
 class HumanEntry(Model):
@@ -57,6 +58,9 @@ class Registry(Model):
     def human_by_token(self, token: str) -> HumanEntry | None:
         h = token_hash(token)
         return next((u for u in self.humans if u.token_sha256 == h), None)
+
+    def human(self, human_id: str) -> HumanEntry | None:
+        return next((u for u in self.humans if u.id == human_id), None)
 
     def is_revoked(self, mandate_id: str) -> bool:
         return mandate_id in self.revoked_mandates

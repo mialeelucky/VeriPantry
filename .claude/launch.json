@@ -6,6 +6,24 @@
       "runtimeExecutable": "backend/.venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--port", "8000"],
       "port": 8000
+    },
+    {
+      "name": "gateway-demo",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.demo:app", "--app-dir", "backend", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "agent",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "stub_agent.app:app", "--app-dir", "agent", "--port", "8100"],
+      "port": 8100
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["frontend/node_modules/vite/bin/vite.js", "frontend", "--port", "5173"],
+      "port": 5173
     }
   ]
 }

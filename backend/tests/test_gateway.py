@@ -35,18 +35,35 @@ SPEC = {"lineId": "L1", "spec": {"query": "semi skimmed milk", "category": "1040
         "quantity": {"value": 1000, "unit": "L"}}
 
 
+class FakePush:
+    """Records what would be pushed to each subscribed device."""
+
+    public_key = "test-vapid-public-key"
+
+    def __init__(self):
+        self.sent: list[tuple[dict, dict]] = []
+        self.fail = False
+
+    def __call__(self, subscription: dict, payload: dict) -> None:
+        if self.fail:
+            raise RuntimeError("push service unavailable")
+        self.sent.append((subscription, payload))
+
+
 class World:
-    def __init__(self, catalog, upstream, clock, conn, keys, policy: Policy | None = None, limits=None):
+    def __init__(self, catalog, upstream, clock, conn, keys, policy: Policy | None = None, limits=None, push=None, webhook=None):
         self.clock = clock
         customer, self.org = make_customer(CUSTOMER, "Hotel 123")
         self.approver, self.approver_token = make_human("u_chef", "Head Chef", "approver", "approver", CUSTOMER)
         self.admin, self.admin_token = make_human("u_fin", "Finance Lead", "approver", "admin", CUSTOMER)
         self.staff, self.staff_token = make_human("u_valio", "Valio Auditor", "staff", None, None)
         self.registry = Registry(customers=[customer], humans=[self.approver, self.admin, self.staff])
-        settings = Settings(public_base_url=AUD, valio_api_base_url="", valio_api_key="")
+        settings = Settings(public_base_url=AUD, valio_api_base_url="", valio_api_key="", demo_mode=True, notify_async=False)
         self.audit = AuditLog(AuditStore(conn), clock, keys.audit)
+        self.push = push
         self.service = GatewayService(settings, catalog, upstream, clock, self.audit, keys, self.registry, GatewayStore(conn),
-                                      policies={CUSTOMER: policy or Policy(scope={"categories": ["104"]})})
+                                      policies={CUSTOMER: policy or Policy(scope={"categories": ["104"]})},
+                                      push_sender=push, webhook_sender=webhook)
         self.client = TestClient(create_app(self.service))
         self.agent_key = generate_key()
         self.mandate = make_mandate(self.org, CUSTOMER, AGENT, self.agent_key, AUD, clock.now(), limits=limits)

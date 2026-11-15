@@ -24,7 +24,11 @@ from app.core.contracts import FulfilmentResult, Plan, PurchaseRequest, Quantity
 from app.core.jcs import to_jsonable
 from app.fulfilment.engine import FulfilmentEngine, RequestError
 from app.fulfilment.feasibility import assess
+from app.audit.rationale import PLAN_TEMPLATES, SELECTION_TEMPLATES, render_codes
+from app.audit.verify import verify_links
+from app.audit.views import view_events
 from app.gateway.errors import ApiError
+from app.gateway.notify import Notifier
 from app.gateway.store import TERMINAL_STATES, GatewayStore
 from app.gateway.upstream_audit import AuditedUpstream
 from app.guardrails.engine import evaluate
@@ -64,11 +68,28 @@ class GatewayService:
         registry: Registry,
         store: GatewayStore,
         policies: dict[str, Policy] | None = None,
+        push_sender: Any = None,
+        webhook_sender: Any = None,
     ):
         self.settings, self.catalog, self.upstream, self.clock = settings, catalog, upstream, clock
         self.audit, self.keys, self.registry, self.store = audit, keys, registry, store
         self.policies = policies or {}
         self._budget: dict[tuple[str, str], deque] = defaultdict(deque)
+        notifier_kwargs = {"webhook": webhook_sender} if webhook_sender else {}
+        self.push_public_key = getattr(push_sender, "public_key", None)
+        self.notifier = Notifier(
+            registry,
+            subscriptions=store.push_subscriptions,
+            log=self._log_notification,
+            push=push_sender,
+            run_async=settings.notify_async,
+            **notifier_kwargs,
+        )
+
+    def _log_notification(self, transaction_id: str, payload: dict) -> None:
+        row = self.store.get_transaction(transaction_id)
+        self.audit.append(ev.NOTIFICATION_SENT, transaction_id=transaction_id, actor=ev.SYSTEM,
+                          customer=row["customer"] if row else None, payload=payload)
 
     @property
     def issuer(self) -> str:
@@ -316,6 +337,7 @@ class GatewayService:
                     "recommendedRank": ls.recommended.rank if ls.recommended else None,
                     "requiredRole": ls.required_role,
                     "guardrails": {str(e.plan.rank): self._guardrail_summary(e.decision) for e in ls.evaluations},
+                    "rationale": to_jsonable(ls.rationale),
                 }
                 for ls in od.lines
             },
@@ -326,7 +348,8 @@ class GatewayService:
     @staticmethod
     def _guardrail_summary(d: Decision) -> dict[str, Any]:
         return {"outcome": d.outcome, "requiredRole": d.required_role, "decisionId": d.decision_id,
-                "reasons": [{"rule": r.rule, "code": r.code, "message": r.message} for r in d.triggered]}
+                "reasons": [to_jsonable({"rule": r.rule, "code": r.code, "message": r.message, "observed": r.observed, "limit": r.limit})
+                            for r in d.triggered]}
 
     def _submit_order(self, tx: TxCtx, chosen: dict[str, Plan], approval: str) -> dict[str, Any]:
         now = self.clock.now()
@@ -389,11 +412,15 @@ class GatewayService:
         deadline = max(deadline, now + MIN_APPROVAL_WINDOW)
         approval_id = f"apr_{uuid.uuid4().hex[:10]}"
         order_reasons = self._guardrail_summary(od.order_decision)["reasons"] if od.order_decision else []
-        data = to_jsonable({"approvalId": approval_id, "orderDraftId": tx.id, "requiredRole": od.required_role, "deadline": deadline,
+        total = sum((p["total"] for line in lines for p in line["plans"] if p["rank"] == line["recommendedRank"]), Decimal(0))
+        request = PurchaseRequest.model_validate(self.store.get_transaction(tx.id)["data"]["request"])
+        data = to_jsonable({"approvalId": approval_id, "orderDraftId": tx.id, "title": self.title(request), "total": total,
+                            "requiredRole": od.required_role, "deadline": deadline,
                             "lines": lines, "orderReasons": order_reasons, "attempt": attempt, "createdAt": now})
         self.store.create_approval(approval_id, tx.id, tx.customer, od.required_role, deadline, now, data)
         self._log(tx, ev.APPROVAL_REQUESTED, ev.SYSTEM, {**data, "rationale": [to_jsonable(Rationale(code="approval_required", params={"role": od.required_role}))]})
         self.store.update_transaction(tx.id, now, state="PENDING_APPROVAL")
+        self.notifier.send("request", tx.id, tx.customer, data)  # frontend.md §4.4: the request finds the approver
 
     def _plans_by_rank(self, tx_id: str) -> tuple[PurchaseRequest, FulfilmentResult]:
         data = self.store.get_transaction(tx_id)["data"]
@@ -430,6 +457,7 @@ class GatewayService:
             self.store.set_approval_state(approval_id, "REJECTED")
             self._log(tx, ev.APPROVAL_DECIDED, approver, {"approvalId": approval_id, "action": "reject", "reason": body["reason"], "approver": who})
             self._close(tx, "REJECTED", "approver_rejected", f"Rejected by {human.display_name}: {body['reason']}")
+            self.notifier.send("decided", tx.id, tx.customer, ap["data"], decided_by=f"rejected by {human.display_name}", exclude=human.id)
             return self.transaction_view(tx.id)
         if action == "modify":
             return self._modify(tx, ap, approver, who, body.get("changes") or {})
@@ -454,11 +482,17 @@ class GatewayService:
         self._log(tx, ev.GUARDRAIL_EVALUATED, ev.SYSTEM, decision)
         if decision.outcome == "ALLOW":
             self.store.set_approval_state(approval_id, "APPROVED")
+            choice = [Rationale(code="approver_choice", params={"approver": human.display_name, "role": human.role})]
             for lid, plan in chosen.items():
                 self._log(tx, ev.PLAN_SELECTED, approver, {"lineId": lid, "rank": plan.rank, "selectionStep": 4, "reason": "approver_choice",
-                                                           "rationale": [Rationale(code="approver_choice", params={"approver": human.display_name, "role": human.role})]})
+                                                           "rationale": choice})
+            data = self.store.get_transaction(tx.id)["data"]
+            for lid, plan in chosen.items():
+                data["selection"][lid].update({"selectedRank": plan.rank, "rationale": to_jsonable(choice)})
+            self.store.update_transaction(tx.id, self.clock.now(), data=data)
             order = self._submit_order(tx, chosen, approval=approval_id)
             self._close(tx, "ORDERED", "human_approved", f"Approved by {human.display_name} ({human.role}).", total=order["total"])
+            self.notifier.send("decided", tx.id, tx.customer, ap["data"], decided_by=f"approved by {human.display_name}", exclude=human.id)
         elif any(r.remedy == "requote" for r in decision.triggered):  # T35
             self.store.set_approval_state(approval_id, "EXPIRED")
             self._log(tx, ev.APPROVAL_EXPIRED, ev.SYSTEM, {"approvalId": approval_id, "deadline": ap["deadline"], "reason": "offer_expired"})
@@ -485,6 +519,7 @@ class GatewayService:
         self.store.set_approval_state(ap["id"], "SUPERSEDED")
         self._log(tx, ev.APPROVAL_SUPERSEDED, approver, {"approvalId": ap["id"], "newRequestId": new.request_id, "changes": changes, "approver": who})
         self._close(tx, "SUPERSEDED", "modified_by_approver", f"Modified by {who['displayName']}; continued as {new.request_id}.")
+        self.notifier.send("decided", tx.id, tx.customer, ap["data"], decided_by=f"changed by {who['displayName']}", exclude=who["id"])
         new_tx = TxCtx(new.request_id, tx.customer, tx.agent, tx.mandate)
         now = self.clock.now()
         self.store.create_transaction(new_tx.id, new_tx.customer, new_tx.agent, now, {"request": new, "mandate": tx.mandate, "attempt": 0})
@@ -506,16 +541,23 @@ class GatewayService:
             self._close(tx, "EXPIRED", "approval_expired", "No approval before the deadline and no re-quote attempts left.")
 
     def expire_due(self) -> int:
-        """Expire pending approvals past their deadline (G4: never approved by silence)."""
+        """Expire pending approvals past their deadline (G4: never approved by silence),
+        and send the reminder before the deadline (frontend.md §4.4)."""
         now = self.clock.now()
         expired = 0
+        reminder_window = timedelta(minutes=self.settings.reminder_before_minutes)
         for ap in self.store.approvals(state="PENDING"):
             if ap["deadline"] <= now:
                 tx = self._tx(ap["transaction_id"])
                 self.store.set_approval_state(ap["id"], "EXPIRED")
                 self._log(tx, ev.APPROVAL_EXPIRED, ev.SYSTEM, {"approvalId": ap["id"], "deadline": ap["deadline"]})
+                self.notifier.send("decided", tx.id, tx.customer, ap["data"], decided_by="expired")
                 self._requote_or_close(tx)
                 expired += 1
+            elif ap["deadline"] - now <= reminder_window and not ap["data"].get("reminderSent"):
+                tx = self._tx(ap["transaction_id"])
+                self.store.update_approval_data(ap["id"], ap["data"] | {"reminderSent": True})
+                self.notifier.send("reminder", tx.id, tx.customer, ap["data"])
         return expired
 
     def run_watchdog(self) -> int:
@@ -533,12 +575,116 @@ class GatewayService:
 
     # ================================================================== views
 
+    def title(self, request: PurchaseRequest) -> str:
+        """A short human title such as "1,000 L lactose-free semi skimmed milk"."""
+        line = request.lines[0]
+        qty = f"{line.quantity.value:,.0f}" if line.quantity.value == line.quantity.value.to_integral() else f"{line.quantity.value:,}"
+        if line.spec.query:
+            what = line.spec.query
+            if "FREE_FROM_LACTOSE" in line.spec.required_attributes:
+                what = "lactose-free " + what
+        elif line.product_id and self.catalog.get(line.product_id):
+            what = self.catalog.get(line.product_id).name_en
+        else:
+            what = line.product_id or "items"
+        more = f" + {len(request.lines) - 1} more" if len(request.lines) > 1 else ""
+        return f"{qty} {line.quantity.unit} {what}{more}"
+
+    def transaction_summaries(self, customer: str | None) -> list[dict[str, Any]]:
+        """Rows for the audit overview (frontend B4)."""
+        rows = []
+        for t in self.store.transactions(customer):
+            data = t["data"]
+            events = self.audit.store.for_transaction(t["id"])
+            closed = next((e for e in reversed(events) if e.type == ev.TRANSACTION_CLOSED), None)
+            order = self.store.order_for_transaction(t["id"])
+            decided_by = None
+            if order:
+                decided = next((e for e in reversed(events) if e.type == ev.APPROVAL_DECIDED and e.payload.get("action") == "approve"), None)
+                decided_by = decided.payload["approver"]["displayName"] if decided else "agent"
+            total = Decimal(str(order["total"])) if order else None
+            if total is None and "selection" in data and "fulfilment" in data:
+                result = FulfilmentResult.model_validate(data["fulfilment"])
+                picks = [
+                    next((p.total for p in lr.plans if p.rank == (data["selection"][lr.line_id].get("selectedRank")
+                                                                 or data["selection"][lr.line_id].get("recommendedRank"))), Decimal(0))
+                    for lr in result.lines
+                ]
+                total = sum(picks, Decimal(0)) or None
+            pending = [a for a in self.store.approvals(customer=t["customer"], state="PENDING") if a["transaction_id"] == t["id"]]
+            request = PurchaseRequest.model_validate(data["request"]) if "request" in data else None
+            rows.append(to_jsonable({
+                "transactionId": t["id"],
+                "title": self.title(request) if request else t["id"],
+                "customer": t["customer"],
+                "state": t["state"],
+                "outcome": closed.payload["outcome"] if closed else t["state"],
+                "reasonCode": closed.payload["reasonCode"] if closed else None,
+                "decidedBy": decided_by,
+                "requiredRole": pending[0]["required_role"] if pending else None,
+                "total": total,
+                "createdAt": t["created_at"],
+                "closedAt": closed.time.isoformat() if closed else None,
+            }))
+        return rows
+
+    def verify_transaction(self, tx_id: str, view: str, customer: str | None, tamper_seq: int | None = None) -> dict[str, Any]:
+        """Verify one transaction's part of the chain in the caller's view.
+
+        With ``tamper_seq`` (frontend B5) one event of an **in-memory copy** is
+        altered first, to show what verification reports after tampering. The
+        database is never written.
+        """
+        items, checkpoint = view_events(self.audit.store, tx_id, view, customer)
+        own = [i for i in items if getattr(i, "transaction_id", None) == tx_id and getattr(i, "type", "") != ev.CHAIN_CHECKPOINT]
+        target = None
+        if tamper_seq is not None:
+            target = next((i for i in own if i.seq == tamper_seq), None)
+            if target is None:
+                raise ApiError(400, "invalid_seq", "That step is not part of this transaction")
+            payload = dict(target.payload or {"redacted": True})
+            payload["tampered"] = True
+            items = [i.model_copy(update={"payload": payload}) if i.seq == tamper_seq else i for i in items]
+        result = verify_links(items, self.keys.jwks, checkpoint=checkpoint)
+        steps = [{"seq": i.seq, "type": i.type,
+                  "ok": result.ok or result.error_seq is None or i.seq < result.error_seq} for i in own]
+        return {"transactionId": tx_id, "view": view, "tamperedSeq": target.seq if target else None,
+                "result": to_jsonable(result), "steps": steps}
+
+    def save_push_subscription(self, human: HumanEntry, subscription: dict[str, Any]) -> dict[str, Any]:
+        if human.kind != "approver":
+            raise ApiError(403, "approver_required", "Only approvers receive approval notifications")
+        if not isinstance(subscription.get("endpoint"), str) or not subscription["endpoint"].startswith("https://"):
+            raise ApiError(400, "invalid_subscription", "A push subscription needs an https endpoint")
+        keys = subscription.get("keys") or {}
+        if not keys.get("p256dh") or not keys.get("auth"):
+            raise ApiError(400, "invalid_subscription", "A push subscription needs p256dh and auth keys")
+        self.store.save_push_subscription(human.id, {"endpoint": subscription["endpoint"], "keys": {"p256dh": keys["p256dh"], "auth": keys["auth"]}}, self.clock.now())
+        return {"subscribed": True, "devices": len(self.store.push_subscriptions(human.id))}
+
+    def remove_push_subscription(self, human: HumanEntry, endpoint: str) -> dict[str, Any]:
+        self.store.delete_push_subscription(human.id, endpoint)
+        return {"subscribed": bool(self.store.push_subscriptions(human.id)), "devices": len(self.store.push_subscriptions(human.id))}
+
+    def me(self, human: HumanEntry) -> dict[str, Any]:
+        customer = self.registry.customer(human.customer) if human.customer else None
+        return {"id": human.id, "displayName": human.display_name, "kind": human.kind, "role": human.role,
+                "customer": human.customer, "customerName": customer.name if customer else None,
+                "channels": {"webPush": len(self.store.push_subscriptions(human.id)),
+                             "webhook": bool(customer and customer.webhook_url)},
+                "pushAvailable": self.push_public_key is not None}
+
     def transaction_view(self, tx_id: str) -> dict[str, Any]:
         row = self.store.get_transaction(tx_id)
         if row is None:
             raise ApiError(404, "not_found", "Transaction not found")
         data = row["data"]
-        view: dict[str, Any] = {"transactionId": tx_id, "status": row["state"], "customer": row["customer"]}
+        view: dict[str, Any] = {"transactionId": tx_id, "status": row["state"], "customer": row["customer"],
+                                "createdAt": row["created_at"]}
+        if "request" in data:
+            request = PurchaseRequest.model_validate(data["request"])
+            view["request"] = to_jsonable(request)
+            view["title"] = self.title(request)
         if "fulfilment" in data:
             request = PurchaseRequest.model_validate(data["request"])
             result = FulfilmentResult.model_validate(data["fulfilment"])
@@ -550,11 +696,19 @@ class GatewayService:
                 for p in lr.plans:
                     pv = plan_view(p, line.quantity.value)
                     pv["guardrail"] = sel.get("guardrails", {}).get(str(p.rank))
+                    pv["rationaleText"] = render_codes(pv.get("rationale", []), PLAN_TEMPLATES)  # B3
                     plans.append(pv)
                 lines.append({"lineId": lr.line_id, "status": lr.status, "reason": to_jsonable(lr.reason), "plans": plans,
-                              "selectedRank": sel.get("selectedRank"), "recommendedRank": sel.get("recommendedRank")})
+                              "candidateCounts": to_jsonable(lr.candidate_counts),
+                              "notPresented": to_jsonable(lr.not_presented),
+                              "selectedRank": sel.get("selectedRank"), "recommendedRank": sel.get("recommendedRank"),
+                              "selectionText": render_codes(sel.get("rationale", []), SELECTION_TEMPLATES)})
             view["lines"] = lines
             view["orderDecision"] = data.get("orderDecision")
+        closed = [e for e in self.audit.store.for_transaction(tx_id) if e.type == ev.TRANSACTION_CLOSED]
+        if closed:
+            p = closed[-1].payload
+            view["closed"] = {"outcome": p["outcome"], "reasonCode": p["reasonCode"], "summary": p["summary"], "at": closed[-1].time.isoformat()}
         pending = [a for a in self.store.approvals(customer=row["customer"]) if a["transaction_id"] == tx_id]
         if pending:
             last = pending[-1]

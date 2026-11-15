@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Form, Header, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+
+from app.trust.sessions import issue_session, verify_session
 
 from app.audit.pdf import render_report_pdf
 from app.audit.render import render_report
@@ -20,13 +25,37 @@ from app.trust.registry import HumanEntry
 from app.trust.tiers import WITHHELD_FIELDS
 
 
-def create_app(service: GatewayService) -> FastAPI:
+def create_app(service: GatewayService, housekeeping_seconds: float | None = None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        task = None
+        if housekeeping_seconds:
+            async def housekeeping():  # deadlines, reminders and abandoned transactions
+                while True:
+                    await asyncio.sleep(housekeeping_seconds)
+                    try:
+                        await asyncio.to_thread(service.run_watchdog)
+                    except Exception:  # pragma: no cover - keep the loop alive
+                        pass
+            task = asyncio.create_task(housekeeping())
+        yield
+        if task:
+            task.cancel()
+
     app = FastAPI(
         title="VeriPantry Agent Gateway",
         version="0.1.0",
         description="Open, verifiable interface for external purchasing agents (see docs/trust-protocol.md).",
+        lifespan=lifespan,
     )
     app.state.service = service
+    app.add_middleware(  # B1
+        CORSMiddleware,
+        allow_origins=service.settings.cors_origins,
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+        expose_headers=["Content-Disposition"],
+    )
 
     @app.exception_handler(ApiError)
     async def _problem(_: Request, exc: ApiError):
@@ -41,7 +70,9 @@ def create_app(service: GatewayService) -> FastAPI:
 
     def caller(authorization: str | None = Header(default=None)) -> AgentPrincipal | HumanEntry:
         token = _bearer(authorization)
-        human = service.registry.human_by_token(token)
+        human = service.registry.human_by_token(token) or verify_session(
+            token, service.keys.jwks, service.issuer, service.registry, service.clock.now()
+        )
         if human:
             return human
         try:
@@ -74,7 +105,8 @@ def create_app(service: GatewayService) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok", "products": len(service.catalog.products), "customers": len(service.registry.customers)}
+        return {"status": "ok", "products": len(service.catalog.products), "customers": len(service.registry.customers),
+                "now": service.clock.now().isoformat()}  # agents align their assertion timestamps to this
 
     @app.get("/.well-known/jwks.json")
     def jwks() -> dict:
@@ -140,18 +172,80 @@ def create_app(service: GatewayService) -> FastAPI:
 
     # ------------------------------------------------------------------ audit (audit-log §9)
 
+    def chosen_view(c, tx_id: str, requested: str | None) -> tuple[str, str | None]:
+        """Valio staff may also look through the buyer's eyes; buyers only get the buyer view."""
+        allowed, customer = audit_scope(c, tx_id)
+        if requested in (None, allowed):
+            return allowed, customer
+        if requested == "buyer" and allowed == "valio":
+            return "buyer", service.store.get_transaction(tx_id)["customer"]
+        raise ApiError(403, "valio_view_restricted", "The Valio view is for Valio Aimo staff")
+
     @app.get("/v1/audit/transactions")
-    def list_transactions(outcome: str | None = None, c=Depends(caller)) -> list:
+    def list_transactions(outcome: str | None = None, c=Depends(caller)) -> list:  # B4
         _, customer = audit_scope(c)
-        rows = service.store.transactions(customer)
-        return [{"transactionId": r["id"], "customer": r["customer"], "state": r["state"], "createdAt": r["created_at"]}
-                for r in rows if outcome is None or r["state"] == outcome]
+        return [r for r in service.transaction_summaries(customer) if outcome is None or r["outcome"] == outcome]
 
     @app.get("/v1/audit/transactions/{tx_id}")
-    def transaction_events(tx_id: str, c=Depends(caller)) -> dict:
-        view, customer = audit_scope(c, tx_id)
+    def transaction_events(tx_id: str, view: str | None = None, c=Depends(caller)) -> dict:
+        view, customer = chosen_view(c, tx_id, view)
         items, checkpoint = view_events(service.audit.store, tx_id, view, customer)
         return {"transactionId": tx_id, "view": view, "events": to_jsonable(items), "checkpoint": to_jsonable(checkpoint)}
+
+    @app.get("/v1/audit/transactions/{tx_id}/verify")
+    def verify_transaction(tx_id: str, view: str | None = None, c=Depends(caller)) -> dict:
+        view, customer = chosen_view(c, tx_id, view)
+        return service.verify_transaction(tx_id, view, customer)
+
+    @app.post("/v1/audit/tamper-preview")
+    def tamper_preview(body: dict[str, Any], c=Depends(caller)) -> dict:  # B5: in-memory only
+        if not service.settings.demo_mode:
+            raise ApiError(404, "not_found", "Not available")
+        if not (isinstance(c, HumanEntry) and c.kind == "staff"):
+            raise ApiError(403, "valio_staff_required", "The tamper demo is for Valio Aimo staff")
+        tx_id = body.get("transactionId", "")
+        if service.store.get_transaction(tx_id) is None:
+            raise ApiError(404, "not_found", "Transaction not found")
+        return service.verify_transaction(tx_id, "valio", None, tamper_seq=int(body.get("seq", 0)))
+
+    # ------------------------------------------------------------------ people, notifications, demo sign-in
+
+    @app.get("/v1/me")
+    def me(c=Depends(caller)) -> dict:
+        if not isinstance(c, HumanEntry):
+            raise ApiError(403, "person_required", "This is for people, not agents")
+        return service.me(c)
+
+    @app.post("/v1/me/push-subscriptions")
+    def add_push(body: dict[str, Any], h: HumanEntry = Depends(approver)) -> dict:
+        return service.save_push_subscription(h, body)
+
+    @app.delete("/v1/me/push-subscriptions")
+    def remove_push(endpoint: str, h: HumanEntry = Depends(approver)) -> dict:
+        return service.remove_push_subscription(h, endpoint)
+
+    @app.get("/.well-known/push-key")
+    def push_key() -> dict:
+        if service.push_public_key is None:
+            raise ApiError(404, "push_unavailable", "Web push is not configured")
+        return {"publicKey": service.push_public_key}
+
+    @app.get("/dev/personas")
+    def personas() -> list:
+        if not service.settings.demo_mode:
+            raise ApiError(404, "not_found", "Not available")
+        return [{"id": h.id, "displayName": h.display_name, "kind": h.kind, "role": h.role, "customer": h.customer}
+                for h in service.registry.humans]
+
+    @app.post("/dev/session")
+    def dev_session(body: dict[str, Any]) -> dict:  # B2: demo mode only
+        if not service.settings.demo_mode:
+            raise ApiError(404, "not_found", "Not available")
+        person = service.registry.human(str(body.get("persona", "")))
+        if person is None:
+            raise ApiError(404, "unknown_persona", "Unknown persona")
+        token, exp = issue_session(service.keys.gateway, person, service.issuer, service.clock.now(), service.settings.human_session_ttl_seconds)
+        return {"token": token, "expiresAt": exp.isoformat(), "person": service.me(person)}
 
     @app.get("/v1/audit/transactions/{tx_id}/report")
     def report(tx_id: str, view: str = "buyer", format: str = "md", c=Depends(caller)):
@@ -159,9 +253,7 @@ def create_app(service: GatewayService) -> FastAPI:
             raise ApiError(400, "invalid_view", "view must be buyer or valio")
         if format not in ("md", "html", "pdf"):
             raise ApiError(400, "invalid_format", "format must be md, html or pdf")
-        allowed_view, customer = audit_scope(c, tx_id)
-        if view == "valio" and allowed_view != "valio":
-            raise ApiError(403, "valio_view_restricted", "The Valio view is for Valio Aimo staff")
+        view, customer = chosen_view(c, tx_id, view)
         if format == "pdf":
             pdf = render_report_pdf(service.audit.store, tx_id, view, customer, service.keys.jwks)
             filename = "audit-report-" + re.sub(r"[^A-Za-z0-9_.-]", "_", tx_id) + f"-{view}.pdf"

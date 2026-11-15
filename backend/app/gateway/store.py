@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS offers (
 CREATE TABLE IF NOT EXISTS search_sessions (
     id TEXT PRIMARY KEY, mandate_id TEXT NOT NULL, product_ids TEXT NOT NULL, expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint TEXT PRIMARY KEY, person_id TEXT NOT NULL, subscription TEXT NOT NULL, created_at TEXT NOT NULL
+);
 """
 
 TERMINAL_STATES = frozenset({"ORDERED", "DENIED", "REJECTED", "EXPIRED", "UNFULFILLABLE", "SUPERSEDED", "FAILED"})
@@ -101,6 +104,24 @@ class GatewayStore:
 
     def set_approval_state(self, ap_id: str, state: str) -> None:
         self._exec("UPDATE approvals SET state = ? WHERE id = ?", (state, ap_id))
+
+    def update_approval_data(self, ap_id: str, data: dict) -> None:
+        self._exec("UPDATE approvals SET data = ? WHERE id = ?", (_dump(data), ap_id))
+
+    # ------------------------------------------------------------------ push subscriptions
+
+    def save_push_subscription(self, person_id: str, subscription: dict, now: datetime) -> None:
+        self._exec(
+            "INSERT OR REPLACE INTO push_subscriptions VALUES (?,?,?,?)",
+            (subscription["endpoint"], person_id, _dump(subscription), now.isoformat()),
+        )
+
+    def delete_push_subscription(self, person_id: str, endpoint: str) -> None:
+        self._exec("DELETE FROM push_subscriptions WHERE endpoint = ? AND person_id = ?", (endpoint, person_id))
+
+    def push_subscriptions(self, person_id: str) -> list[dict]:
+        rows = self._exec("SELECT subscription FROM push_subscriptions WHERE person_id = ?", (person_id,)).fetchall()
+        return [json.loads(r[0]) for r in rows]
 
     def approvals(self, customer: str | None = None, state: str | None = None) -> list[dict]:
         clauses, args = [], []

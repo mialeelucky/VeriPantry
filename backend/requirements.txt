@@ -10,6 +10,7 @@ markdown>=3.7
 tzdata>=2024.2
 python-multipart>=0.0.20
 xhtml2pdf>=0.2.16
+pywebpush>=2.0
 
 # development
 pytest>=8.3

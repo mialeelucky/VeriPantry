@@ -1,0 +1,9 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+httpx>=0.28
+pydantic-settings>=2.6
+pyjwt[crypto]>=2.10
+cryptography>=44
+
+# development
+pytest>=8.3
